@@ -1,0 +1,34 @@
+Nombre completo:	#Nombre#
+País: 	
+
+¿Cuántos años de experiencia tienes en dirección de proyectos tecnológicos?	
+
+        Nombre	Universidad	Diploma	Desde / Hasta
+Universidad:			
+Post-grado/        Masterado:			
+
+Certificaciones	 Institución 	Horas	Mes / Año de Finalización
+			
+			
+
+Nombre del proyecto	 Descripción 	Mes/Año	Herramientas
+			
+			
+			
+
+Nombre de la Institución: 	Fecha de ingreso: 	Fecha de finalización del contrato:  
+Posición:		
+Principales funciones:		
+
+Nombre de la Institución: 	Fecha de ingreso: 	Fecha de finalización del contrato:  
+Posición:		
+Principales funciones:		
+
+Gestión de proyectos tecnológicos	Conocimiento en mitigación de riesgos	Metodologías ágiles	Gestión de proyectos en la nube	Ingeniería de procesos
+9	8	10	             10	8
+
+MS Project	Jira	Planner	Scrum	Gestión de procesos de negocios	Power BI	 Gestión de relaciones con el cliente
+9	10	10	10	9	9	9
+
+Soluciones en Salesforce	Workflow  Automatización de procesos	IBM Filenet(gestión documental)	Gestión de stakeholders
+8	8	8	9
