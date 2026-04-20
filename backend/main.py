@@ -19,6 +19,10 @@ import google.generativeai as genai
 import pypdf
 import docx
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field
+from typing import List, Optional
+from google.api_core import exceptions
+import asyncio
 
 # Configuración de logs para evitar errores en modo sin consola
 LOG_CONFIG = {
@@ -84,6 +88,69 @@ def load_config():
             print(f"Error leyendo config.txt: {e}")
     return None
 
+
+class Universidad(BaseModel):
+    institucion: str = "No especificado"
+    titulo: str = "No especificado"
+    fechas: str = "No especificado"
+
+class Postgrado(BaseModel):
+    institucion: str = "No especificado"
+    titulo: str = "No especificado"
+    fechas: str = "No especificado"
+
+class Educacion(BaseModel):
+    universidad: Universidad = Field(default_factory=Universidad)
+    postgrado: Postgrado = Field(default_factory=Postgrado)
+
+class Certificacion(BaseModel):
+    nombre: str = "No especificado"
+    institucion: str = "No especificado"
+    horas: str = "No especificado"
+    fecha: str = "No especificado"
+
+class Logro(BaseModel):
+    nombre: str = "No especificado"
+    descripcion: str = "No especificado"
+    fecha: str = "No especificado"
+    herramientas: str = "No especificado"
+
+class Experiencia(BaseModel):
+    empresa: str = "No especificado"
+    fecha_ingreso: str = "No especificado"
+    fecha_salida: str = "No especificado"
+    cargo: str = "No especificado"
+    funciones: str = "No especificado"
+
+class Autoevaluacion(BaseModel):
+    gestion_proyectos: str = "N/E"
+    mitigacion_riesgos: str = "N/E"
+    agilismo: str = "N/E"
+    cloud: str = "N/E"
+    ingenieria_procesos: str = "N/E"
+    ms_project: str = "N/E"
+    jira: str = "N/E"
+    planner: str = "N/E"
+    scrum: str = "N/E"
+    bpm: str = "N/E"
+    power_bi: str = "N/E"
+    crm: str = "N/E"
+    salesforce: str = "N/E"
+    workflow: str = "N/E"
+    automatizacion: str = "N/E"
+    ibm_filenet: str = "N/E"
+    stakeholders: str = "N/E"
+
+class CVData(BaseModel):
+    nombre: str = "No especificado"
+    pais: str = "No especificado"
+    anios_experiencia: str = "No especificado"
+    educacion: Educacion = Field(default_factory=Educacion)
+    certificaciones: List[Certificacion] = Field(default_factory=list)
+    logros: List[Logro] = Field(default_factory=list)
+    experiencia: List[Experiencia] = Field(default_factory=list)
+    autoevaluacion: Autoevaluacion = Field(default_factory=Autoevaluacion)
+
 load_dotenv()
 
 app = FastAPI()
@@ -106,106 +173,125 @@ def extract_text_from_pdf(pdf_path: str) -> str:
         print("Error extracting PDF:", e)
     return text
 
-def fill_docx_template(template_path: str, data: dict, output_path: str):
+def safe_set_cell(table, row_idx, col_idx, text):
+    """ Escribe en una celda de forma segura, verificando límites """
+    try:
+        if row_idx < len(table.rows):
+            row = table.rows[row_idx]
+            if col_idx < len(row.cells):
+                row.cells[col_idx].text = str(text) if text is not None else "No especificado"
+    except Exception as e:
+        print(f"Error safe_set_cell (table_idx?, {row_idx}, {col_idx}): {e}")
+
+def fill_docx_template(template_path: str, data: CVData, output_path: str):
     doc = docx.Document(template_path)
     try:
+        # Detectar si es la plantilla nueva (13 tablas) o la antigua
+        is_new_template = len(doc.tables) >= 13
+
         # 1. Información Personal
         if len(doc.tables) > 0:
-            doc.tables[0].cell(0, 1).text = str(data.get("nombre", "No especificado"))
-            doc.tables[0].cell(1, 1).text = str(data.get("pais", "No especificado"))
+            t = doc.tables[0]
+            safe_set_cell(t, 0, 1, data.nombre)
+            safe_set_cell(t, 1, 1, data.pais)
         
-        # 2. Información Complementaria
+        # 2. Información Complementaria (Años de experiencia)
         if len(doc.tables) > 1:
-            doc.tables[1].cell(0, 1).text = str(data.get("anios_experiencia", "No especificado"))
+            safe_set_cell(doc.tables[1], 0, 1, data.anios_experiencia)
 
         # 3. Educación
         if len(doc.tables) > 2:
-            edu = data.get("educacion", {})
-            univ = edu.get("universidad", {})
-            doc.tables[2].cell(1, 1).text = str(univ.get("institucion", "No especificado"))
-            doc.tables[2].cell(1, 2).text = str(univ.get("titulo", "No especificado"))
-            doc.tables[2].cell(1, 3).text = str(univ.get("fechas", "No especificado"))
+            edu = data.educacion
+            univ = edu.university if hasattr(edu, "university") else edu.universidad
+            t = doc.tables[2]
+            safe_set_cell(t, 1, 1, univ.institucion)
+            safe_set_cell(t, 1, 2, univ.titulo)
+            safe_set_cell(t, 1, 3, univ.fechas)
             
-            post = edu.get("postgrado", {})
-            doc.tables[2].cell(2, 1).text = str(post.get("institucion", "No especificado"))
-            doc.tables[2].cell(2, 2).text = str(post.get("titulo", "No especificado"))
-            doc.tables[2].cell(2, 3).text = str(post.get("fechas", "No especificado"))
+            post = edu.postgrado
+            safe_set_cell(t, 2, 1, post.institucion)
+            safe_set_cell(t, 2, 2, post.titulo)
+            safe_set_cell(t, 2, 3, post.fechas)
 
         # 4. Certificaciones
         if len(doc.tables) > 3:
-            certs = data.get("certificaciones", [])
+            certs = data.certificaciones
             table = doc.tables[3]
             for i, cert in enumerate(certs):
-                if i < len(table.rows) - 1:
-                    row = table.rows[i+1]
-                else:
-                    row = table.add_row()
-                row.cells[0].text = str(cert.get("nombre", "No especificado"))
-                row.cells[1].text = str(cert.get("institucion", "No especificado"))
-                row.cells[2].text = str(cert.get("horas", "No especificado"))
-                row.cells[3].text = str(cert.get("fecha", "No especificado"))
+                row_idx = i + 1
+                if row_idx >= len(table.rows):
+                    table.add_row()
+                
+                safe_set_cell(table, row_idx, 0, cert.nombre)
+                safe_set_cell(table, row_idx, 1, cert.institucion)
+                # Si la tabla tiene 4 columnas, ponemos fecha en la última. 
+                # Si tiene 3, la ponemos en la última disponible (la 2).
+                date_col = 3 if len(table.rows[0].cells) >= 4 else 2
+                safe_set_cell(table, row_idx, date_col, cert.fecha)
 
         # 5. Logros
         if len(doc.tables) > 4:
-            logros = data.get("logros", [])
+            logros = data.logros
             table = doc.tables[4]
             for i, ach in enumerate(logros):
-                if i < len(table.rows) - 1:
-                    row = table.rows[i+1]
-                else:
-                    row = table.add_row()
-                row.cells[0].text = str(ach.get("nombre", "No especificado"))
-                row.cells[1].text = str(ach.get("descripcion", "No especificado"))
-                row.cells[2].text = str(ach.get("fecha", "No especificado"))
-                row.cells[3].text = str(ach.get("herramientas", "No especificado"))
+                row_idx = i + 1
+                if row_idx >= len(table.rows):
+                    table.add_row()
+                safe_set_cell(table, row_idx, 0, ach.nombre)
+                safe_set_cell(table, row_idx, 1, ach.descripcion)
+                safe_set_cell(table, row_idx, 2, ach.fecha)
+                safe_set_cell(table, row_idx, 3, ach.herramientas)
 
         # 6. Experiencia Laboral
         def fill_exp(table, emp_data):
             try:
-                table.cell(0, 0).text = f"Nombre de la Institución: {emp_data.get('empresa', 'N/E')}"
-                if len(table.rows[0].cells) > 1:
-                    table.cell(0, 1).text = f"Fecha de ingreso: {emp_data.get('fecha_ingreso', 'N/E')}"
-                if len(table.rows[0].cells) > 2:
-                    table.cell(0, 2).text = f"Fecha de finalización del contrato: {emp_data.get('fecha_salida', 'N/E')}"
-                if len(table.rows) > 1:
-                    table.cell(1, 0).text = f"Posición: {emp_data.get('cargo', 'N/E')}"
-                if len(table.rows) > 2:
-                    table.cell(2, 0).text = f"Principales funciones: {emp_data.get('funciones', 'N/E')}"
+                safe_set_cell(table, 0, 0, f"Nombre de la Institución: {emp_data.empresa}")
+                safe_set_cell(table, 0, 1, f"Fecha de ingreso: {emp_data.fecha_ingreso}")
+                safe_set_cell(table, 0, 2, f"Fecha de finalización del contrato: {emp_data.fecha_salida}")
+                safe_set_cell(table, 1, 0, f"Posición: {emp_data.cargo}")
+                safe_set_cell(table, 2, 0, f"Principales funciones: {emp_data.funciones}")
             except Exception as e:
                 print("Error filling exp row:", e)
                 
-        exps = data.get("experiencia", [])
-        if len(exps) > 0 and len(doc.tables) > 5:
-            fill_exp(doc.tables[5], exps[0])
-        if len(exps) > 1 and len(doc.tables) > 6:
-            fill_exp(doc.tables[6], exps[1])
+        exps = data.experiencia
+        # En la nueva plantilla hay tablas para hasta 5 experiencias (5 a 9)
+        start_exp_idx = 5
+        for i, exp in enumerate(exps):
+            table_idx = start_exp_idx + i
+            if table_idx < len(doc.tables):
+                # Validar que sea una tabla de experiencia (máximo hasta antes de Autoevaluación)
+                if table_idx < (10 if is_new_template else 7):
+                    fill_exp(doc.tables[table_idx], exp)
 
         # 7. Autoevaluación
-        auto = data.get("autoevaluacion", {})
-        if len(doc.tables) > 7:
-            t = doc.tables[7]
-            t.cell(1, 0).text = str(auto.get("gestion_proyectos", "N/E"))
-            t.cell(1, 1).text = str(auto.get("mitigacion_riesgos", "N/E"))
-            t.cell(1, 2).text = str(auto.get("agilismo", "N/E"))
-            t.cell(1, 3).text = str(auto.get("cloud", "N/E"))
-            t.cell(1, 4).text = str(auto.get("ingenieria_procesos", "N/E"))
+        # En nueva plantilla son tablas 10, 11, 12. En la vieja 7, 8, 9.
+        auto_idx_start = 10 if is_new_template else 7
+        
+        auto = data.autoevaluacion
+        if len(doc.tables) > auto_idx_start:
+            t = doc.tables[auto_idx_start]
+            safe_set_cell(t, 1, 0, auto.gestion_proyectos)
+            safe_set_cell(t, 1, 1, auto.mitigacion_riesgos)
+            safe_set_cell(t, 1, 2, auto.agilismo)
+            safe_set_cell(t, 1, 3, auto.cloud)
+            safe_set_cell(t, 1, 4, auto.ingenieria_procesos)
 
-        if len(doc.tables) > 8:
-            t = doc.tables[8]
-            t.cell(1, 0).text = str(auto.get("ms_project", "N/E"))
-            t.cell(1, 1).text = str(auto.get("jira", "N/E"))
-            t.cell(1, 2).text = str(auto.get("planner", "N/E"))
-            t.cell(1, 3).text = str(auto.get("scrum", "N/E"))
-            t.cell(1, 4).text = str(auto.get("bpm", "N/E"))
-            t.cell(1, 5).text = str(auto.get("power_bi", "N/E"))
-            t.cell(1, 6).text = str(auto.get("crm", "N/E"))
+        if len(doc.tables) > auto_idx_start + 1:
+            t = doc.tables[auto_idx_start + 1]
+            safe_set_cell(t, 1, 0, auto.ms_project)
+            safe_set_cell(t, 1, 1, auto.jira)
+            safe_set_cell(t, 1, 2, auto.planner)
+            safe_set_cell(t, 1, 3, auto.scrum)
+            safe_set_cell(t, 1, 4, auto.bpm)
+            safe_set_cell(t, 1, 5, auto.power_bi)
+            safe_set_cell(t, 1, 6, auto.crm)
 
-        if len(doc.tables) > 9:
-            t = doc.tables[9]
-            t.cell(1, 0).text = str(auto.get("salesforce", "N/E"))
-            t.cell(1, 1).text = str(auto.get("workflow", "N/E")) + " / " + str(auto.get("automatizacion", "N/E"))
-            t.cell(1, 2).text = str(auto.get("ibm_filenet", "N/E"))
-            t.cell(1, 3).text = str(auto.get("stakeholders", "N/E"))
+        if len(doc.tables) > auto_idx_start + 2:
+            t = doc.tables[auto_idx_start + 2]
+            safe_set_cell(t, 1, 0, auto.salesforce)
+            safe_set_cell(t, 1, 1, f"{auto.workflow} / {auto.automatizacion}")
+            safe_set_cell(t, 1, 2, auto.ibm_filenet)
+            safe_set_cell(t, 1, 3, auto.stakeholders)
 
         doc.save(output_path)
     except Exception as e:
@@ -258,6 +344,28 @@ Extructura JSON esperada:
 CV A ANALIZAR:
 """
 
+async def call_gemini_with_retry(model: genai.GenerativeModel, prompt: str, max_retries: int = 3):
+    """ Llama a Gemini con reintentos exponenciales para manejar límites de cuota """
+    for attempt in range(max_retries):
+        try:
+            response = model.generate_content(prompt)
+            # Validamos que la respuesta tenga texto y no sea una lista vacía de candidatos
+            if not response.candidates or not response.text:
+                raise Exception("Respuesta vacía de Gemini")
+            return response.text
+        except exceptions.ResourceExhausted as e:
+            if attempt == max_retries - 1:
+                raise e
+            wait_time = (2 ** attempt) * 10 + 5 # 15s, 25s, ...
+            print(f"Cuota excedida. Reintentando en {wait_time}s... (Intento {attempt+1}/{max_retries})")
+            await asyncio.sleep(wait_time)
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise e
+            print(f"Error inesperado ({str(e)}). Reintentando en 5s...")
+            await asyncio.sleep(5)
+    return None
+
 @app.post("/api/generate")
 async def generate_cv(
     cv: UploadFile = File(...),
@@ -288,14 +396,23 @@ async def generate_cv(
         # Extract Text
         cv_text = extract_text_from_pdf(cv_path)
 
-        # Call Gemini
+        # Call Gemini with Robustness
         genai.configure(api_key=final_api_key)
         model = genai.GenerativeModel('gemini-flash-latest', generation_config={"response_mime_type": "application/json"})
-        response = model.generate_content(PROMPT_JSON + cv_text)
         
-        parsed_data = json.loads(response.text)
+        raw_json = await call_gemini_with_retry(model, PROMPT_JSON + cv_text)
+        if not raw_json:
+            raise HTTPException(status_code=500, detail="No se pudo obtener una respuesta válida de la IA tras varios intentos.")
+        
+        # Validation with Pydantic
+        try:
+            parsed_data = CVData.model_validate_json(raw_json)
+        except Exception as ve:
+            print(f"Validation Error: {ve}")
+            # Fallback a parseo simple si falla la validación estricta
+            parsed_data = CVData(**json.loads(raw_json))
 
-        output_filename = f"SOLICITUD_{parsed_data.get('nombre', 'Generada').replace(' ', '_')}.docx"
+        output_filename = f"SOLICITUD_{parsed_data.nombre.replace(' ', '_')}.docx"
         output_path = os.path.join(base_temp, output_filename)
 
         # Fill DOCX

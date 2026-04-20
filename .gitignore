@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+.env
+
+# Build and Distribution
+dist/
+build/
+*.spec
+!TalentoWEB.spec
+
+# Binaries
+*.exe
+*.bin
+*.zip
+
+# App-specific
+backend/temp/
+TalentoWEB_Release/temp/
+backend/.env
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
