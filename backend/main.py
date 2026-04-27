@@ -1,5 +1,7 @@
 import sys
 import os
+import unicodedata
+import re
 
 # Fix para PyInstaller --noconsole (donde stdout/stderr son None)
 if sys.stdout is None:
@@ -168,9 +170,16 @@ def extract_text_from_pdf(pdf_path: str) -> str:
     try:
         reader = pypdf.PdfReader(pdf_path)
         for page in reader.pages:
-            text += page.extract_text() + "\n"
+            content = page.extract_text()
+            if content:
+                text += content + "\n"
+        
+        if not text.strip():
+            raise Exception("El PDF parece estar vacío o ser una imagen (escaneado) sin texto extraíble.")
+            
     except Exception as e:
         print("Error extracting PDF:", e)
+        raise e
     return text
 
 def safe_set_cell(table, row_idx, col_idx, text):
@@ -302,7 +311,13 @@ PROMPT_JSON = """
 Actúa como un asistente técnico de reclutamiento especializado en la automatización de documentos para SIPECOM S.A.
 Extrae la información del siguiente CV y devuelve EXCLUSIVAMENTE un JSON válido sin markdown (`{}`).
 Si un dato no existe, coloca "No especificado".
-Extructura JSON esperada:
+
+REGLAS IMPORTANTES:
+1. EXPERIENCIA Y FUNCIONES: Cuando extraigas la información de la experiencia, si la descripción de las "funciones" (o responsabilidades de la Posición) tiene solo 1 línea de texto o es muy breve en el CV original, DEBES realizar un análisis deductivo y explicar detalladamente las responsabilidades que implica esa posición basándote en el cargo. El texto resultante en el campo "funciones" debe tener obligatoriamente un MÍNIMO DE 4 LÍNEAS de contenido.
+2. AÑOS DE EXPERIENCIA: Calcula cuidadosamente el tiempo REAL total de años de experiencia sumando los periodos exactos de todas las posiciones laborales descritas en el CV. Este dato debe ser verídico y reflejar la experiencia real del candidato.
+3. CERTIFICACIONES: Extrae ABSOLUTAMENTE TODAS las certificaciones, capacitaciones, o cursos que el candidato mencione en el CV. No omitas ninguna, asegúrate de añadirlas todas en la lista de "certificaciones".
+
+Estructura JSON esperada:
 {
   "nombre": "Nombre completo",
   "pais": "Pais de residencia",
@@ -344,26 +359,34 @@ Extructura JSON esperada:
 CV A ANALIZAR:
 """
 
-async def call_gemini_with_retry(model: genai.GenerativeModel, prompt: str, max_retries: int = 3):
-    """ Llama a Gemini con reintentos exponenciales para manejar límites de cuota """
-    for attempt in range(max_retries):
+async def call_gemini_with_fallback(prompt: str, api_key: str):
+    """ Llama a Gemini probando diferentes modelos en caso de agotar la cuota """
+    genai.configure(api_key=api_key)
+    
+    models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.5-flash', 'gemini-flash-latest']
+    
+    for attempt, model_name in enumerate(models):
         try:
-            response = model.generate_content(prompt)
-            # Validamos que la respuesta tenga texto y no sea una lista vacía de candidatos
+            print(f"Intentando extraer datos con modelo {model_name}...")
+            model = genai.GenerativeModel(model_name, generation_config={"response_mime_type": "application/json"})
+            response = await model.generate_content_async(prompt)
             if not response.candidates or not response.text:
                 raise Exception("Respuesta vacía de Gemini")
             return response.text
         except exceptions.ResourceExhausted as e:
-            if attempt == max_retries - 1:
-                raise e
-            wait_time = (2 ** attempt) * 10 + 5 # 15s, 25s, ...
-            print(f"Cuota excedida. Reintentando en {wait_time}s... (Intento {attempt+1}/{max_retries})")
-            await asyncio.sleep(wait_time)
+            print(f"Cuota excedida para {model_name}.")
+            if attempt < len(models) - 1:
+                print("Intentando con el siguiente modelo de la lista...")
+                continue
+            else:
+                raise Exception("Límite de cuota gratuita superado en todos los modelos limitados. Por favor, intenta más tarde o verifica tu facturación en Google AI Studio.")
         except Exception as e:
-            if attempt == max_retries - 1:
+            print(f"Error con {model_name}: {str(e)}")
+            if attempt < len(models) - 1:
+                print("Intentando con el siguiente modelo...")
+                continue
+            else:
                 raise e
-            print(f"Error inesperado ({str(e)}). Reintentando en 5s...")
-            await asyncio.sleep(5)
     return None
 
 @app.post("/api/generate")
@@ -396,11 +419,8 @@ async def generate_cv(
         # Extract Text
         cv_text = extract_text_from_pdf(cv_path)
 
-        # Call Gemini with Robustness
-        genai.configure(api_key=final_api_key)
-        model = genai.GenerativeModel('gemini-flash-latest', generation_config={"response_mime_type": "application/json"})
-        
-        raw_json = await call_gemini_with_retry(model, PROMPT_JSON + cv_text)
+        # Call Gemini with Robustness using Fallback
+        raw_json = await call_gemini_with_fallback(PROMPT_JSON + cv_text, final_api_key)
         if not raw_json:
             raise HTTPException(status_code=500, detail="No se pudo obtener una respuesta válida de la IA tras varios intentos.")
         
@@ -412,7 +432,14 @@ async def generate_cv(
             # Fallback a parseo simple si falla la validación estricta
             parsed_data = CVData(**json.loads(raw_json))
 
-        output_filename = f"SOLICITUD_{parsed_data.nombre.replace(' ', '_')}.docx"
+        # Sanitizar nombre para el archivo (quitar tildes y caracteres especiales)
+        def slugify(value):
+            value = unicodedata.normalize('NFKD', value).encode('ascii', 'ignore').decode('ascii')
+            value = re.sub(r'[^\w\s-]', '', value).strip().upper()
+            return re.sub(r'[-\s]+', '_', value)
+
+        safe_name = slugify(parsed_data.nombre)
+        output_filename = f"SDE_{safe_name}.docx"
         output_path = os.path.join(base_temp, output_filename)
 
         # Fill DOCX
